@@ -1,0 +1,20 @@
+[package]
+name = "socks5-server"
+version = "0.1.0"
+authors = ["vinoca <vinoca@vinoca.org>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "0.2", features = ["rt-core", "tcp", "dns", "io-util"] }
+futures = "0.3"
+bytes = "0.5"
+log = "0.4"
+clap = "2.33"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
