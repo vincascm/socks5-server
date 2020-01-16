@@ -18,35 +18,41 @@ use bytes::{buf::BufExt, Buf, BufMut, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 const VERSION: u8 = 0x05;
-const ADDR_TYPE_IPV4: u8 = 0x01;
-const ADDR_TYPE_DOMAIN_NAME: u8 = 0x03;
-const ADDR_TYPE_IPV6: u8 = 0x04;
 
 #[derive(PartialEq)]
 pub enum Method {
-    None = 0x00,
-    GssApi = 0x01,
-    Password = 0x02,
-    NotAcceptable = 0xff,
+    None,
+    GssApi,
+    Password,
+    NotAcceptable,
+    InvalidMethod(u8),
 }
 
 impl Method {
-    pub fn from_u8(code: u8) -> Option<Method> {
+    pub fn from_u8(code: u8) -> Method {
         match code {
-            0x00 => Some(Method::None),
-            0x01 => Some(Method::GssApi),
-            0x02 => Some(Method::Password),
-            0xff => Some(Method::NotAcceptable),
-            _ => None,
+            0x00 => Method::None,
+            0x01 => Method::GssApi,
+            0x02 => Method::Password,
+            0xff => Method::NotAcceptable,
+            c => Method::InvalidMethod(c),
         }
     }
 
-    pub fn to_u8(&self) -> u8 {
+    pub fn is_invalid_method(&self) -> bool {
+        match self {
+            Method::InvalidMethod(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_u8(&self) -> u8 {
         match self {
             Method::None => 0x00,
             Method::GssApi => 0x01,
             Method::Password => 0x02,
             Method::NotAcceptable => 0xff,
+            Method::InvalidMethod(c) => *c,
         }
     }
 }
@@ -68,8 +74,7 @@ impl Command {
     }
 }
 
-/// SOCKS5 reply code
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Replies {
     Succeeded,
     GeneralFailure,
@@ -85,7 +90,7 @@ pub enum Replies {
 }
 
 impl Replies {
-    fn as_u8(self) -> u8 {
+    fn as_u8(&self) -> u8 {
         match self {
             Replies::Succeeded => 0x00,
             Replies::GeneralFailure => 0x01,
@@ -96,7 +101,7 @@ impl Replies {
             Replies::TtlExpired => 0x06,
             Replies::CommandNotSupported => 0x07,
             Replies::AddressTypeNotSupported => 0x08,
-            Replies::OtherReply(c) => c,
+            Replies::OtherReply(c) => *c,
         }
     }
 
@@ -115,18 +120,17 @@ impl Replies {
         }
     }
 
-    pub fn to_response(&self, address: &Address) -> TcpResponseHeader {
+    pub fn into_response(self, address: Address) -> TcpResponseHeader {
         TcpResponseHeader::new(self, address)
     }
 }
 
-/// SOCKS5 protocol error
 #[derive(Clone)]
 pub struct Error {
     /// Reply code
     pub reply: Replies,
     /// Error message
-    pub message: String,
+    message: String,
 }
 
 impl Error {
@@ -182,14 +186,23 @@ impl Address {
         R: AsyncRead + Unpin,
     {
         let mut addr_type_buf = [0u8; 1];
-        let _ = stream.read_exact(&mut addr_type_buf).await?;
+        stream.read_exact(&mut addr_type_buf).await?;
 
         let addr_type = addr_type_buf[0];
+        let addr_type = match AddressType::from_u8(addr_type) {
+            Some(addr) => addr,
+            None => {
+                return Err(Error::new(
+                    Replies::AddressTypeNotSupported,
+                    format!("not supported address type {:#x}", addr_type),
+                ))
+            },
+        };
         match addr_type {
-            ADDR_TYPE_IPV4 => {
+            AddressType::Ipv4 => {
                 let mut buf = BytesMut::with_capacity(6);
                 buf.resize(6, 0);
-                let _ = stream.read_exact(&mut buf).await?;
+                stream.read_exact(&mut buf).await?;
 
                 let mut cursor = buf.to_bytes();
                 let v4addr = Ipv4Addr::new(
@@ -203,9 +216,9 @@ impl Address {
                     v4addr, port,
                 ))))
             }
-            ADDR_TYPE_IPV6 => {
+            AddressType::Ipv6 => {
                 let mut buf = [0u8; 18];
-                let _ = stream.read_exact(&mut buf).await?;
+                stream.read_exact(&mut buf).await?;
 
                 let mut cursor = Cursor::new(&buf);
                 let v6addr = Ipv6Addr::new(
@@ -224,16 +237,16 @@ impl Address {
                     v6addr, port, 0, 0,
                 ))))
             }
-            ADDR_TYPE_DOMAIN_NAME => {
+            AddressType::DomainName => {
                 let mut length_buf = [0u8; 1];
-                let _ = stream.read_exact(&mut length_buf).await?;
+                stream.read_exact(&mut length_buf).await?;
                 let length = length_buf[0] as usize;
 
                 // Len(Domain) + Len(Port)
                 let buf_length = length + 2;
                 let mut buf = BytesMut::with_capacity(buf_length);
                 buf.resize(buf_length, 0);
-                let _ = stream.read_exact(&mut buf).await?;
+                stream.read_exact(&mut buf).await?;
 
                 let mut cursor = buf.to_bytes();
                 let mut raw_addr = Vec::with_capacity(length);
@@ -250,13 +263,6 @@ impl Address {
                 let port = cursor.get_u16();
 
                 Ok(Address::DomainNameAddress(addr, port))
-            }
-            _ => {
-                // Wrong Address Type . Socks5 only supports ipv4, ipv6 and domain name
-                Err(Error::new(
-                    Replies::AddressTypeNotSupported,
-                    format!("not supported address type {:#x}", addr_type),
-                ))
             }
         }
     }
@@ -351,14 +357,14 @@ impl FromStr for Address {
 
 #[inline]
 fn write_ipv4_address<B: BufMut>(addr: &SocketAddrV4, buf: &mut B) {
-    buf.put_u8(ADDR_TYPE_IPV4); // Address type
+    buf.put_u8(AddressType::Ipv4.as_u8()); // Address type
     buf.put_slice(&addr.ip().octets()); // Ipv4 bytes
     buf.put_u16(addr.port()); // Port
 }
 
 #[inline]
 fn write_ipv6_address<B: BufMut>(addr: &SocketAddrV6, buf: &mut B) {
-    buf.put_u8(ADDR_TYPE_IPV6); // Address type
+    buf.put_u8(AddressType::Ipv6.as_u8()); // Address type
     for seg in &addr.ip().segments() {
         buf.put_u16(*seg); // Ipv6 bytes
     }
@@ -369,7 +375,7 @@ fn write_ipv6_address<B: BufMut>(addr: &SocketAddrV6, buf: &mut B) {
 fn write_domain_name_address<B: BufMut>(dnaddr: &str, port: u16, buf: &mut B) {
     assert!(dnaddr.len() <= u8::max_value() as usize);
 
-    buf.put_u8(ADDR_TYPE_DOMAIN_NAME);
+    buf.put_u8(AddressType::DomainName.as_u8());
     buf.put_u8(dnaddr.len() as u8);
     buf.put_slice(dnaddr[..].as_bytes());
     buf.put_u16(port);
@@ -389,6 +395,28 @@ fn write_address<B: BufMut>(addr: &Address, buf: &mut B) {
         Address::DomainNameAddress(ref dnaddr, ref port) => {
             write_domain_name_address(dnaddr, *port, buf)
         }
+    }
+}
+
+#[derive(Copy, Clone)]
+enum AddressType {
+    Ipv4       = 1,
+    DomainName = 3,
+    Ipv6       = 4,
+}
+
+impl AddressType {
+    pub fn from_u8(code: u8) -> Option<AddressType> {
+        match code {
+            1 => Some(AddressType::Ipv4),
+            3 => Some(AddressType::DomainName),
+            4 => Some(AddressType::Ipv6),
+            _ => None,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
     }
 }
 
@@ -415,7 +443,7 @@ impl TcpRequestHeader {
         R: AsyncRead + Unpin,
     {
         let mut buf = [0u8; 3];
-        let _ = r.read_exact(&mut buf).await?;
+        r.read_exact(&mut buf).await?;
 
         let ver = buf[0];
         if ver != VERSION {
@@ -459,10 +487,10 @@ pub struct TcpResponseHeader {
 
 impl TcpResponseHeader {
     /// Creates a response header
-    pub fn new(reply: &Replies, address: &Address) -> TcpResponseHeader {
+    pub fn new(reply: Replies, address: Address) -> TcpResponseHeader {
         TcpResponseHeader {
-            reply: reply.clone(),
-            address: address.clone(),
+            reply,
+            address,
         }
     }
 
@@ -472,7 +500,7 @@ impl TcpResponseHeader {
         R: AsyncRead + Unpin,
     {
         let mut buf = [0u8; 3];
-        let _ = r.read_exact(&mut buf).await?;
+        r.read_exact(&mut buf).await?;
 
         let ver = buf[0];
         let reply_code = buf[1];
@@ -521,7 +549,7 @@ impl AuthenticationRequest {
         R: AsyncRead + Unpin,
     {
         let mut buf = [0u8; 2];
-        let _ = r.read_exact(&mut buf).await?;
+        r.read_exact(&mut buf).await?;
 
         let ver = buf[0];
         let nmet = buf[1];
@@ -536,12 +564,11 @@ impl AuthenticationRequest {
         }
 
         let mut methods = vec![0u8; nmet as usize];
-        let _ = r.read_exact(&mut methods).await?;
+        r.read_exact(&mut methods).await?;
         let methods = methods
             .iter()
             .map(|m| Method::from_u8(*m))
-            .filter(|m| m.is_some())
-            .map(|m| m.unwrap())
+            .filter(|m| !m.is_invalid_method())
             .collect();
 
         Ok(AuthenticationRequest { methods })
@@ -569,7 +596,7 @@ impl AuthenticationResponse {
     pub fn to_bytes(&self) -> BytesMut {
         let mut buffer = BytesMut::with_capacity(2);
         buffer.put_u8(VERSION);
-        buffer.put_u8(self.method.to_u8());
+        buffer.put_u8(self.method.as_u8());
         buffer
     }
 }

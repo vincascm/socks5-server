@@ -33,7 +33,7 @@ async fn handle_client(mut stream: TcpStream) -> io::Result<()> {
     let header = match TcpRequestHeader::read_from(&mut r).await {
         Ok(h) => h,
         Err(e) => {
-            let rh = e.reply.to_response(&Address::SocketAddress(client_addr));
+            let rh = e.clone().reply.into_response(Address::SocketAddress(client_addr));
             w.write_all(&rh.to_bytes()).await?;
             w.flush().await?;
             return Err(e.into());
@@ -44,7 +44,7 @@ async fn handle_client(mut stream: TcpStream) -> io::Result<()> {
         Command::Connect => handle_connect((r, w), addr).await,
         // Bind and UdpAssociate, is not supported
         _ => {
-            let rh = Replies::CommandNotSupported.to_response(&addr);
+            let rh = Replies::CommandNotSupported.into_response(addr);
             w.write_all(&rh.to_bytes()).await?;
             w.flush().await?;
             Ok(())
@@ -52,10 +52,7 @@ async fn handle_client(mut stream: TcpStream) -> io::Result<()> {
     }
 }
 
-async fn handle_connect<'a>(
-    (mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>),
-    addr: crate::socks5::Address,
-) -> io::Result<()> {
+async fn handle_connect<'a>((mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>), addr: Address) -> io::Result<()> {
     use io::ErrorKind;
 
     let tcp_addr = match addr {
@@ -64,7 +61,8 @@ async fn handle_connect<'a>(
             match lookup_host((domain.as_str(), port)).await?.next() {
                 Some(addr) => addr,
                 None => {
-                    let header = Replies::HostUnreachable.to_response(&(domain.as_str(), port).into());
+                    let header =
+                        Replies::HostUnreachable.into_response((domain.as_str(), port).into());
                     w.write_all(&header.to_bytes()).await?;
                     w.flush().await?;
                     return Err(ErrorKind::AddrNotAvailable.into());
@@ -75,7 +73,7 @@ async fn handle_connect<'a>(
 
     let mut host_stream = match TcpStream::connect(tcp_addr).await {
         Ok(s) => {
-            let header = Replies::Succeeded.to_response(&tcp_addr.into());
+            let header = Replies::Succeeded.into_response(tcp_addr.into());
             w.write_buf(&mut header.to_bytes()).await?;
             w.flush().await?;
             s
@@ -87,7 +85,7 @@ async fn handle_connect<'a>(
                 _ => Replies::NetworkUnreachable,
             };
 
-            let header = reply.to_response(&tcp_addr.into());
+            let header = reply.into_response(tcp_addr.into());
             w.write_all(&header.to_bytes()).await?;
             w.flush().await?;
             return Err(e);
