@@ -7,14 +7,13 @@ use tokio::{
     },
 };
 
-use futures::future::select;
-
 use crate::socks5::{
-    Address, AuthenticationRequest, AuthenticationResponse, Command, Method, Replies,
+    AuthenticationRequest, AuthenticationResponse,
     TcpRequestHeader,
+    Method, Command, Replies, Address,
 };
 
-async fn handle_client(mut stream: TcpStream) -> io::Result<()> {
+async fn handle_client(mut stream: TcpStream, allow_ipv6: bool) -> io::Result<()> {
     let client_addr = stream.peer_addr()?;
     let (mut r, mut w) = stream.split();
 
@@ -27,55 +26,50 @@ async fn handle_client(mut stream: TcpStream) -> io::Result<()> {
             Method::None.into()
         };
     w.write_all(&authentication_response.to_bytes()).await?;
-    w.flush().await?;
 
     // requests
     let header = match TcpRequestHeader::read_from(&mut r).await {
         Ok(h) => h,
         Err(e) => {
-            let rh = e.clone().reply.into_response(Address::SocketAddress(client_addr));
+            let rh = e.clone().reply.into_response(client_addr.into());
             w.write_all(&rh.to_bytes()).await?;
-            w.flush().await?;
             return Err(e.into());
         }
     };
     let addr = header.address;
     match header.command {
-        Command::Connect => handle_connect((r, w), addr).await,
+        Command::Connect => handle_connect((r, w), addr, allow_ipv6).await,
         // Bind and UdpAssociate, is not supported
         _ => {
             let rh = Replies::CommandNotSupported.into_response(addr);
             w.write_all(&rh.to_bytes()).await?;
-            w.flush().await?;
             Ok(())
         }
     }
 }
 
-async fn handle_connect<'a>((mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>), addr: Address) -> io::Result<()> {
+async fn handle_connect<'a>((mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>), addr: Address, allow_ipv6: bool) -> io::Result<()> {
     use io::ErrorKind;
 
-    let tcp_addr = match addr {
-        Address::SocketAddress(addr) => addr,
-        Address::DomainNameAddress(domain, port) => {
-            match lookup_host((domain.as_str(), port)).await?.next() {
-                Some(addr) => addr,
-                None => {
-                    let header =
-                        Replies::HostUnreachable.into_response((domain.as_str(), port).into());
-                    w.write_all(&header.to_bytes()).await?;
-                    w.flush().await?;
-                    return Err(ErrorKind::AddrNotAvailable.into());
-                }
-            }
+    if !allow_ipv6 && addr.is_ipv6() {
+        let resp = Replies::NetworkUnreachable.into_response(addr.into());
+        w.write_all(&resp.to_bytes()).await?;
+        return Err(ErrorKind::AddrNotAvailable.into())
+    }
+
+    let tcp_addr = match addr.to_socket_addrs().await {
+        Ok(addr) => addr,
+        Err(e) => {
+            let resp = Replies::HostUnreachable.into_response(addr.into());
+            w.write_all(&resp.to_bytes()).await?;
+            return Err(e);
         }
     };
 
     let mut host_stream = match TcpStream::connect(tcp_addr).await {
         Ok(s) => {
             let header = Replies::Succeeded.into_response(tcp_addr.into());
-            w.write_buf(&mut header.to_bytes()).await?;
-            w.flush().await?;
+            w.write_buf(&mut header.to_bytes().as_ref()).await?;
             s
         }
         Err(e) => {
@@ -87,23 +81,34 @@ async fn handle_connect<'a>((mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>), addr:
 
             let header = reply.into_response(tcp_addr.into());
             w.write_all(&header.to_bytes()).await?;
-            w.flush().await?;
             return Err(e);
         }
     };
     let (mut host_r, mut host_w) = host_stream.split();
-    select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
+    futures::future::select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
     Ok(())
 }
 
 pub async fn run(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = match lookup_host(addr).await?.next() {
+        Some(addr) => addr,
+        None => {
+            let e: io::Error = io::ErrorKind::AddrNotAvailable.into();
+            return Err(e.into());
+        },
+    };
+    let allow_ipv6 = addr.is_ipv6();
     let mut listener = TcpListener::bind(addr).await?;
 
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
-            if let Err(e) = handle_client(stream).await {
-                error!("handle client error: {}", e);
+            if let Err(e) = handle_client(stream, allow_ipv6).await {
+                if let Ok(log_level) = std::env::var("LOG_LEVEL") {
+                    if log_level == "error" {
+                        println!("error: {}", e);
+                    }
+                }
             }
         });
     }

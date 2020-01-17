@@ -1,31 +1,33 @@
-#[macro_use]
-extern crate log;
-
 mod server;
 mod socks5;
 
-const HELP: &str = r#"
+macro_rules! help {() => (
+r#"
 options:
     -h  show help
     -l <address> assgin a listen address
     -V  show version
 "#;
-
+)}
 
 fn main() {
     let mut args = std::env::args();
     args.next(); // skip app's name
     let listen = match args.next() {
         Some(opts) => match opts.as_str() {
-            "-h" => return println!(concat!(env!("CARGO_PKG_NAME"), "\n{}"), &HELP),
+            "-h" => Err(concat!(env!("CARGO_PKG_NAME"), "\n", help!())),
             "-l" => match args.next() {
-                Some(listen) => listen,
-                None => return println!("invalid listen argument, required a value."),
+                Some(listen) => Ok(listen),
+                None => Err("invalid listen argument, required a value."),
             },
-            "-V" => return println!(env!("CARGO_PKG_VERSION")),
-            _    => return println!(r#"invalid options, use "-h" to show help"#),
+            "-V" => Err(env!("CARGO_PKG_VERSION")),
+            _    => Err(r#"invalid options, use "-h" to show help"#),
         },
-        None => "127.0.0.1:1080".to_owned(),
+        None => Ok("127.0.0.1:1080".to_owned()),
+    };
+    let listen = match listen {
+        Ok(listen) => listen,
+        Err(e) => return println!("{}", e),
     };
     let mut rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
