@@ -137,14 +137,14 @@ impl AuthenticationRequest {
         }
 
         let n = r.read_u8().await?;
-        let mut methods = vec![0; n as usize];
-        r.read_exact(&mut methods).await?;
-        let methods = methods
-            .iter()
-            .map(|m| Method::from_u8(*m))
-            .filter(|m| !m.is_invalid_method())
-            .collect();
-
+        let mut methods = Vec::new();
+        for _ in 0..n {
+            let method = r.read_u8().await?;
+            let method = Method::from_u8(method);
+            if !method.is_invalid_method() {
+                methods.push(method);
+            }
+        }
         Ok(AuthenticationRequest { methods })
     }
 
@@ -328,8 +328,8 @@ impl Address {
                 ))))
             }
             AddressType::DomainName => {
-                let domain_len = stream.read_u8().await?;
-                let mut domain = vec!(0; domain_len as usize);
+                let domain_len = stream.read_u8().await? as usize;
+                let mut domain = vec!(0; domain_len);
                 stream.read_exact(&mut domain).await?;
                 let domain = match String::from_utf8(domain.to_vec()) {
                     Ok(domain) => domain,
@@ -365,7 +365,7 @@ impl Address {
 
     pub async fn to_socket_addrs(&self) -> io::Result<SocketAddr> {
         match self {
-            Address::SocketAddress(addr) => Ok(addr.clone()),
+            Address::SocketAddress(addr) => Ok(*addr),
             Address::DomainNameAddress(addr, port) => match lookup_host((addr.as_str(), *port)).await?.next() {
                 Some(addr) => Ok(addr),
                 None => Err(io::ErrorKind::AddrNotAvailable.into())

@@ -52,7 +52,7 @@ async fn handle_connect<'a>((mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>), addr:
     use io::ErrorKind;
 
     if !allow_ipv6 && addr.is_ipv6() {
-        let resp = Replies::NetworkUnreachable.into_response(addr.into());
+        let resp = Replies::NetworkUnreachable.into_response(addr);
         w.write_all(&resp.to_bytes()).await?;
         return Err(ErrorKind::AddrNotAvailable.into())
     }
@@ -60,7 +60,7 @@ async fn handle_connect<'a>((mut r, mut w): (ReadHalf<'a>, WriteHalf<'a>), addr:
     let tcp_addr = match addr.to_socket_addrs().await {
         Ok(addr) => addr,
         Err(e) => {
-            let resp = Replies::HostUnreachable.into_response(addr.into());
+            let resp = Replies::HostUnreachable.into_response(addr);
             w.write_all(&resp.to_bytes()).await?;
             return Err(e);
         }
