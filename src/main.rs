@@ -1,4 +1,5 @@
-use socks5_server::a;
+mod socks5;
+mod server;
 
 macro_rules! help {() => (
 r#"
@@ -28,25 +29,11 @@ fn main() {
         Ok(listen) => listen,
         Err(e) => return println!("{}", e),
     };
-    let socks_b = match args.next() {
-        Some(opts) => match opts.as_str() {
-            "-b" => match args.next() {
-                Some(socks_b) => Ok(socks_b),
-                None => Err("invalid listen argument, required a value."),
-            },
-            _    => Err(r#"invalid options, use "-h" to show help"#),
-        },
-        None => Ok("unix:///tmp/kcptun.socket".to_owned()),
-    };
-    let socks_b = match socks_b {
-        Ok(socks_b) => socks_b,
-        Err(e) => return println!("{}", e),
-    };
     let mut rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => return println!("tokio runtime init error: {}", e),
     };
-    if let Err(e) = rt.block_on(a::run(&listen, &socks_b)) {
+    if let Err(e) = rt.block_on(server::Server::run(&listen)) {
         println!("startup error: {}", e)
     }
 }
