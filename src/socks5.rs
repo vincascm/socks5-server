@@ -108,6 +108,17 @@ impl Replies {
     }
 }
 
+impl From<std::io::Error> for Replies {
+    fn from(error: std::io::Error) -> Replies {
+        use std::io::ErrorKind;
+
+        match error.kind() {
+            ErrorKind::ConnectionRefused => Replies::ConnectionRefused,
+            ErrorKind::ConnectionAborted => Replies::HostUnreachable,
+            _ => Replies::NetworkUnreachable,
+        }
+    }
+}
 /// SOCKS5 authentication request packet
 ///
 /// ```plain
