@@ -1,14 +1,15 @@
-mod socks5;
 mod server;
 
-macro_rules! help {() => (
-r#"
+macro_rules! help {
+    () => {
+        r#"
 options:
     -h  show help
     -l <address> assgin a listen address
     -V  show version
 "#;
-)}
+    };
+}
 
 fn main() {
     let mut args = std::env::args();
@@ -21,7 +22,7 @@ fn main() {
                 None => Err("invalid listen argument, required a value."),
             },
             "-V" => Err(env!("CARGO_PKG_VERSION")),
-            _    => Err(r#"invalid options, use "-h" to show help"#),
+            _ => Err(r#"invalid options, use "-h" to show help"#),
         },
         None => Ok("127.0.0.1:1080".to_owned()),
     };

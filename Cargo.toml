@@ -8,6 +8,7 @@ edition = "2018"
 tokio = { version = "0.2", features = ["rt-core", "tcp", "dns", "io-util"] }
 futures = "0.3"
 bytes = "0.5"
+socks5x = { version = "0.1", git = "https://github.com/vincascm/socks5x.git" }
 
 [profile.release]
 opt-level = "z"

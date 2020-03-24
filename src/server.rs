@@ -1,28 +1,21 @@
 use std::net::SocketAddr;
 
-use tokio::{
-    io::{Result, ErrorKind, copy, AsyncWriteExt},
-    net::{
-        lookup_host,
-        TcpListener,
-        TcpStream,
-    },
+use socks5x::{
+    AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
 };
-
-use crate::socks5::{
-    AuthenticationRequest,
-    AuthenticationResponse,
-    Command,
-    Method,
-    Replies,
-    TcpRequestHeader, 
+use tokio::{
+    io::{copy, AsyncWriteExt, ErrorKind, Result},
+    net::{lookup_host, TcpListener, TcpStream},
 };
 
 pub struct Server(TcpStream);
 
 impl Server {
     pub async fn run(addr: &str) -> Result<()> {
-        let addr = lookup_host(addr).await?.next().ok_or(ErrorKind::AddrNotAvailable)?;
+        let addr = lookup_host(addr)
+            .await?
+            .next()
+            .ok_or(ErrorKind::AddrNotAvailable)?;
         let mut listener = TcpListener::bind(addr).await?;
 
         loop {
@@ -79,7 +72,12 @@ impl Server {
                 let (mut r, mut w) = self.0.split();
                 futures::future::select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
                 Ok(())
-            },
+            }
+            Command::LookupHost => {
+                let addr = addr.to_socket_addrs().await?;
+                self.reply(Replies::Succeeded, addr).await?;
+                Ok(())
+            }
             // Bind and UdpAssociate, is not supported
             _ => {
                 let rh = Replies::CommandNotSupported.into_response(addr);
@@ -103,4 +101,3 @@ impl From<TcpStream> for Server {
         Server(s)
     }
 }
-
