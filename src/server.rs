@@ -40,7 +40,7 @@ impl Server {
             if authentication_request.required_authentication() {
                 Method::NotAcceptable.into()
             } else {
-                Method::None.into()
+                Method::NONE.into()
             };
         self.write(&authentication_response.to_bytes()).await?;
 
@@ -53,8 +53,8 @@ impl Server {
                 return Err(e.into());
             }
         };
-        let addr = header.address;
-        match header.command {
+        let addr = header.address();
+        match header.command() {
             Command::Connect => {
                 let addr = addr.to_socket_addrs().await?;
                 let mut host_stream = match TcpStream::connect(addr).await {
@@ -80,7 +80,7 @@ impl Server {
             }
             // Bind and UdpAssociate, is not supported
             _ => {
-                let rh = Replies::CommandNotSupported.into_response(addr);
+                let rh = Replies::CommandNotSupported.into_response(addr.clone());
                 self.write(&rh.to_bytes()).await
             }
         }
