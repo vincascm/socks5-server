@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use socks5x::{
+use socks5::{
     AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
 };
 use tokio::{
@@ -71,11 +71,6 @@ impl Server {
                 let (mut host_r, mut host_w) = host_stream.split();
                 let (mut r, mut w) = self.0.split();
                 futures::future::select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
-                Ok(())
-            }
-            Command::LookupHost => {
-                let addr = addr.to_socket_addrs().await?;
-                self.reply(Replies::Succeeded, addr).await?;
                 Ok(())
             }
             // Bind and UdpAssociate, is not supported
