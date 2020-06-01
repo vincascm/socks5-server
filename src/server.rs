@@ -1,7 +1,10 @@
 use std::net::{SocketAddr, TcpListener, TcpStream};
 
 use anyhow::Result;
-use futures::io::{copy, AsyncReadExt, AsyncWriteExt};
+use futures::{
+    future::select,
+    io::{copy, AsyncReadExt, AsyncWriteExt},
+};
 use smol::{Async, Task};
 use socks5::{
     AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
@@ -53,7 +56,7 @@ impl Server {
         let addr = header.address();
         match header.command() {
             Command::Connect => {
-                let addr = addr.to_socket_addrs().await?;
+                let addr = addr.clone().to_socket_addrs().await?;
                 let host_stream = match Async::<TcpStream>::connect(addr).await {
                     Ok(s) => {
                         self.reply(Replies::Succeeded, addr).await?;
@@ -63,7 +66,7 @@ impl Server {
                 };
                 let (mut host_r, mut host_w) = host_stream.split();
                 let (mut r, mut w) = self.0.split();
-                futures::future::select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
+                select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
                 Ok(())
             }
             // Bind and UdpAssociate, is not supported
