@@ -5,10 +5,11 @@ authors = ["vinoca <vinoca@vinoca.org>"]
 edition = "2018"
 
 [dependencies]
-tokio = { version = "0.2", features = ["rt-core", "tcp", "dns", "io-util"] }
-futures = "0.3"
+smol = "0.1.10"
+futures = "0.3.5"
 bytes = "0.5"
-socks5 = { version = "0.1", git = "https://github.com/vincascm/socks5.git" }
+anyhow = "1.0.31"
+socks5 = { version = "0.2", git = "https://github.com/vincascm/socks5.git" }
 
 [profile.release]
 opt-level = "z"

@@ -30,11 +30,7 @@ fn main() {
         Ok(listen) => listen,
         Err(e) => return println!("{}", e),
     };
-    let mut rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => return println!("tokio runtime init error: {}", e),
-    };
-    if let Err(e) = rt.block_on(server::Server::run(&listen)) {
+    if let Err(e) = server::Server::run(&listen) {
         println!("startup error: {}", e)
     }
 }

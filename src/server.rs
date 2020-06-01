@@ -1,39 +1,37 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 
+use anyhow::Result;
+use futures::io::{copy, AsyncReadExt, AsyncWriteExt};
+use smol::{Async, Task};
 use socks5::{
     AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
 };
-use tokio::{
-    io::{copy, AsyncWriteExt, ErrorKind, Result},
-    net::{lookup_host, TcpListener, TcpStream},
-};
 
-pub struct Server(TcpStream);
+pub struct Server(Async<TcpStream>);
 
 impl Server {
-    pub async fn run(addr: &str) -> Result<()> {
-        let addr = lookup_host(addr)
-            .await?
-            .next()
-            .ok_or(ErrorKind::AddrNotAvailable)?;
-        let mut listener = TcpListener::bind(addr).await?;
+    pub fn run(addr: &str) -> Result<()> {
+        smol::run(async {
+            let listener = Async::<TcpListener>::bind(addr)?;
 
-        loop {
-            let (stream, _) = listener.accept().await?;
-            tokio::spawn(async move {
-                let mut server: Server = stream.into();
-                if let Err(e) = server.proxy().await {
-                    if let Ok(log_level) = std::env::var("LOG_LEVEL") {
-                        if log_level == "error" {
-                            println!("error: {}", e);
+            loop {
+                let (stream, _) = listener.accept().await?;
+                Task::spawn(async move {
+                    let server: Server = stream.into();
+                    if let Err(e) = server.proxy().await {
+                        if let Ok(log_level) = std::env::var("LOG_LEVEL") {
+                            if log_level == "error" {
+                                println!("error: {}", e);
+                            }
                         }
                     }
-                }
-            });
-        }
+                })
+                .detach();
+            }
+        })
     }
 
-    async fn proxy(&mut self) -> Result<()> {
+    async fn proxy(mut self) -> Result<()> {
         // authentication
         let authentication_request = AuthenticationRequest::read_from(&mut self.0).await?;
         let authentication_response: AuthenticationResponse =
@@ -48,7 +46,10 @@ impl Server {
         let header = match TcpRequestHeader::read_from(&mut self.0).await {
             Ok(h) => h,
             Err(e) => {
-                let rh = e.clone().reply.into_response(self.0.peer_addr()?.into());
+                let rh = e
+                    .clone()
+                    .reply
+                    .into_response(self.0.get_ref().peer_addr()?.into());
                 self.write(&rh.to_bytes()).await?;
                 return Err(e.into());
             }
@@ -57,16 +58,12 @@ impl Server {
         match header.command() {
             Command::Connect => {
                 let addr = addr.to_socket_addrs().await?;
-                let mut host_stream = match TcpStream::connect(addr).await {
+                let host_stream = match Async::<TcpStream>::connect(addr).await {
                     Ok(s) => {
                         self.reply(Replies::Succeeded, addr).await?;
                         s
                     }
-                    Err(e) => {
-                        let error = e.kind().into();
-                        self.reply(e.into(), addr).await?;
-                        return Err(error);
-                    }
+                    Err(e) => return Err(e.into()),
                 };
                 let (mut host_r, mut host_w) = host_stream.split();
                 let (mut r, mut w) = self.0.split();
@@ -87,12 +84,12 @@ impl Server {
     }
 
     async fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.0.write_all(bytes).await
+        Ok(self.0.write_all(bytes).await?)
     }
 }
 
-impl From<TcpStream> for Server {
-    fn from(s: TcpStream) -> Server {
+impl From<Async<TcpStream>> for Server {
+    fn from(s: Async<TcpStream>) -> Server {
         Server(s)
     }
 }
