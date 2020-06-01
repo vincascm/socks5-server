@@ -19,11 +19,7 @@ impl Server {
                 Task::spawn(async move {
                     let server: Server = stream.into();
                     if let Err(e) = server.proxy().await {
-                        if let Ok(log_level) = std::env::var("LOG_LEVEL") {
-                            if log_level == "error" {
-                                println!("error: {}", e);
-                            }
-                        }
+                        println!("error: {}", e);
                     }
                 })
                 .detach();
