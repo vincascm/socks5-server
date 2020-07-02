@@ -1,4 +1,7 @@
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::{
+    convert::TryInto,
+    net::{SocketAddr, TcpListener, TcpStream},
+};
 
 use anyhow::Result;
 use futures::{
@@ -56,7 +59,8 @@ impl Server {
         let addr = header.address();
         match header.command() {
             Command::Connect => {
-                let addr = addr.clone().to_socket_addrs().await?;
+                let addr = addr.clone();
+                let addr = smol::blocking!(addr.try_into())?;
                 let host_stream = match Async::<TcpStream>::connect(addr).await {
                     Ok(s) => {
                         self.reply(Replies::Succeeded, addr).await?;
@@ -83,7 +87,8 @@ impl Server {
     }
 
     async fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        Ok(self.0.write_all(bytes).await?)
+        self.0.write_all(bytes).await?;
+        Ok(self.0.flush().await?)
     }
 }
 
