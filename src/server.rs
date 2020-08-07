@@ -1,9 +1,9 @@
 use std::{
     convert::TryInto,
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::{
     future::select,
     io::{copy, AsyncReadExt, AsyncWriteExt},
@@ -17,6 +17,10 @@ pub struct Server(Async<TcpStream>);
 
 impl Server {
     pub fn run(addr: &str) -> Result<()> {
+        let addr = addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow!("invalid listen address"))?;
         smol::run(async {
             let listener = Async::<TcpListener>::bind(addr)?;
 
@@ -60,7 +64,7 @@ impl Server {
         match header.command() {
             Command::Connect => {
                 let addr = addr.clone();
-                let addr = smol::blocking!(addr.try_into())?;
+                let addr = smol::unblock!(addr.try_into())?;
                 let host_stream = match Async::<TcpStream>::connect(addr).await {
                     Ok(s) => {
                         self.reply(Replies::Succeeded, addr).await?;
