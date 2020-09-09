@@ -1,32 +1,24 @@
-use std::{
-    convert::TryInto,
-    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
-};
-
 use anyhow::{anyhow, Result};
-use futures::{
-    future::select,
-    io::{copy, AsyncReadExt, AsyncWriteExt},
+use smol::{
+    block_on,
+    future::zip,
+    io::{copy, AsyncWriteExt},
+    net::{SocketAddr, TcpListener, TcpStream},
+    spawn,
 };
-use smol::Async;
 use socks5::{
-    AuthenticationRequest, AuthenticationResponse, Command, Error, Method, Replies,
-    TcpRequestHeader,
+    AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
 };
 
-pub struct Server(Async<TcpStream>);
+pub struct Server(TcpStream);
 
 impl Server {
     pub fn run(addr: &str) -> Result<()> {
-        let addr = addr
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| anyhow!("invalid listen address"))?;
-        smol::block_on(async {
-            let listener = Async::<TcpListener>::bind(addr)?;
+        block_on(async {
+            let listener = TcpListener::bind(addr).await?;
             loop {
                 let (stream, _) = listener.accept().await?;
-                smol::spawn(async move {
+                spawn(async move {
                     let server: Server = stream.into();
                     if let Err(e) = server.proxy().await {
                         println!("error: {}", e);
@@ -52,10 +44,7 @@ impl Server {
         let header = match TcpRequestHeader::read_from(&mut self.0).await {
             Ok(h) => h,
             Err(e) => {
-                let rh = e
-                    .clone()
-                    .reply
-                    .into_response(self.0.get_ref().peer_addr()?.into());
+                let rh = e.clone().reply.into_response(self.0.peer_addr()?.into());
                 self.write(&rh.to_bytes()).await?;
                 return Err(e.into());
             }
@@ -63,9 +52,7 @@ impl Server {
         let addr = header.address();
         match header.command() {
             Command::Connect => {
-                let a = addr.clone();
-                let a: Result<SocketAddr, Error> = smol::unblock(|| a.try_into()).await;
-                let addr = match a {
+                let dest_addr = match addr.to_socket_addr().await {
                     Ok(addr) => addr,
                     Err(e) => {
                         let resp = e.reply.into_response(addr.clone());
@@ -73,17 +60,18 @@ impl Server {
                         return Err(e.into());
                     }
                 };
-                let host_stream = match Async::<TcpStream>::connect(addr).await {
+                let dest_tcp = match TcpStream::connect(dest_addr).await {
                     Ok(s) => {
-                        self.reply(Replies::Succeeded, addr).await?;
+                        self.reply(Replies::Succeeded, dest_addr).await?;
                         s
                     }
                     Err(e) => return Err(e.into()),
                 };
-                let (mut host_r, mut host_w) = host_stream.split();
-                let (mut r, mut w) = self.0.split();
-                select(copy(&mut r, &mut host_w), copy(&mut host_r, &mut w)).await;
-                Ok(())
+
+                match zip(copy(&self.0, &dest_tcp), copy(&dest_tcp, &self.0)).await {
+                    (Ok(_), Ok(_)) => Ok(()),
+                    _ => Err(anyhow!("io error")),
+                }
             }
             // Bind and UdpAssociate, is not supported
             _ => {
@@ -104,8 +92,8 @@ impl Server {
     }
 }
 
-impl From<Async<TcpStream>> for Server {
-    fn from(s: Async<TcpStream>) -> Server {
+impl From<TcpStream> for Server {
+    fn from(s: TcpStream) -> Server {
         Server(s)
     }
 }
