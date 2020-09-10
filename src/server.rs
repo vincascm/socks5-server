@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use smol::{
     block_on,
-    future::zip,
+    future::race,
     io::{copy, AsyncWriteExt},
     net::{SocketAddr, TcpListener, TcpStream},
     spawn,
@@ -68,10 +68,10 @@ impl Server {
                     Err(e) => return Err(e.into()),
                 };
 
-                match zip(copy(&self.0, &dest_tcp), copy(&dest_tcp, &self.0)).await {
-                    (Ok(_), Ok(_)) => Ok(()),
-                    _ => Err(anyhow!("io error")),
-                }
+                race(copy(&self.0, &dest_tcp), copy(&dest_tcp, &self.0))
+                    .await
+                    .map(|_| ())
+                    .map_err(|_| anyhow!("io error"))
             }
             // Bind and UdpAssociate, is not supported
             _ => {
