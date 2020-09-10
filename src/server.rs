@@ -30,6 +30,7 @@ impl Server {
     }
 
     async fn proxy(mut self) -> Result<()> {
+        self.0.set_nodelay(true)?;
         // authentication
         let authentication_request = AuthenticationRequest::read_from(&mut self.0).await?;
         let authentication_response: AuthenticationResponse =
