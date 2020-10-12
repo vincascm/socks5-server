@@ -1,24 +1,33 @@
+use std::{
+    convert::TryInto,
+    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
+};
+
 use anyhow::{anyhow, Result};
 use smol::{
     block_on,
     future::{race, FutureExt},
     io::{copy, AsyncWriteExt},
-    net::{SocketAddr, TcpListener, TcpStream},
-    spawn, Timer,
+    spawn, unblock, Async, Timer,
 };
 use socks5::{
-    AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
+    AuthenticationRequest, AuthenticationResponse, Command, Error, Method, Replies,
+    TcpRequestHeader,
 };
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(180);
 
-pub struct Server(TcpStream);
+pub struct Server(Async<TcpStream>);
 
 impl Server {
     pub fn run(addr: &str) -> Result<()> {
+        let addr = addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| anyhow!("invalid listen address"))?;
         block_on(async {
-            let listener = TcpListener::bind(addr).await?;
+            let listener = Async::<TcpListener>::bind(addr)?;
             loop {
                 let (stream, _) = listener.accept().await?;
                 spawn(async move {
@@ -33,7 +42,6 @@ impl Server {
     }
 
     async fn proxy(mut self) -> Result<()> {
-        self.0.set_nodelay(true)?;
         // authentication
         let authentication_request = AuthenticationRequest::read_from(&mut self.0).await?;
         let authentication_response: AuthenticationResponse =
@@ -48,7 +56,11 @@ impl Server {
         let header = match TcpRequestHeader::read_from(&mut self.0).await {
             Ok(h) => h,
             Err(e) => {
-                let rh = e.clone().reply.into_response(self.0.peer_addr()?.into());
+                let tcp_stream = self.0.get_ref();
+                let rh = e
+                    .clone()
+                    .reply
+                    .into_response(tcp_stream.peer_addr()?.into());
                 self.write(&rh.to_bytes()).await?;
                 return Err(e.into());
             }
@@ -56,7 +68,11 @@ impl Server {
         let addr = header.address();
         match header.command() {
             Command::Connect => {
-                let dest_addr = match addr.to_socket_addr().await {
+                let dest_addr: Result<_, Error> = {
+                    let addr = addr.clone();
+                    unblock(|| addr.try_into()).await
+                };
+                let dest_addr = match dest_addr {
                     Ok(addr) => addr,
                     Err(e) => {
                         let resp = e.reply.into_response(addr.clone());
@@ -64,7 +80,7 @@ impl Server {
                         return Err(e.into());
                     }
                 };
-                let dest_tcp = match TcpStream::connect(dest_addr).await {
+                let dest_tcp = match Async::<TcpStream>::connect(dest_addr).await {
                     Ok(s) => {
                         self.reply(Replies::Succeeded, dest_addr).await?;
                         s
@@ -103,8 +119,8 @@ impl Server {
     }
 }
 
-impl From<TcpStream> for Server {
-    fn from(s: TcpStream) -> Server {
+impl From<Async<TcpStream>> for Server {
+    fn from(s: Async<TcpStream>) -> Server {
         Server(s)
     }
 }
