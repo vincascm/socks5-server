@@ -6,17 +6,14 @@ use std::{
 use anyhow::{anyhow, Result};
 use smol::{
     block_on,
-    future::{race, FutureExt},
+    future::race,
     io::{copy, AsyncWriteExt},
-    spawn, unblock, Async, Timer,
+    spawn, unblock, Async,
 };
 use socks5::{
     AuthenticationRequest, AuthenticationResponse, Command, Error, Method, Replies,
     TcpRequestHeader,
 };
-use std::time::Duration;
-
-const TIMEOUT: Duration = Duration::from_secs(180);
 
 pub struct Server(Async<TcpStream>);
 
@@ -88,9 +85,7 @@ impl Server {
                     Err(e) => return Err(e.into()),
                 };
 
-                let left = copy(&self.0, &dest_tcp).or(async { Self::timeout().await });
-                let right = copy(&dest_tcp, &self.0).or(async { Self::timeout().await });
-                race(left, right)
+                race(copy(&self.0, &dest_tcp), copy(&dest_tcp, &self.0))
                     .await
                     .map(|_| ())
                     .map_err(|_| anyhow!("io error"))
@@ -111,11 +106,6 @@ impl Server {
     async fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.0.write_all(bytes).await?;
         Ok(self.0.flush().await?)
-    }
-
-    async fn timeout() -> Result<u64, std::io::Error> {
-        Timer::after(TIMEOUT).await;
-        Err(std::io::ErrorKind::TimedOut.into())
     }
 }
 
