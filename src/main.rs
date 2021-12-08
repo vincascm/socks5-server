@@ -7,7 +7,7 @@ options:
     -h  show help
     -l <address> assgin a listen address
     -V  show version
-"#;
+"#
     };
 }
 
