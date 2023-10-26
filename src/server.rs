@@ -4,15 +4,14 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use smol::{
-    block_on,
+use async_executor::Executor;
+use async_io::{block_on, Async};
+use futures_lite::{
     future::race,
     io::{copy, AsyncWriteExt},
-    spawn, unblock, Async,
 };
 use socks5::{
-    AuthenticationRequest, AuthenticationResponse, Command, Error, Method, Replies,
-    TcpRequestHeader,
+    AuthenticationRequest, AuthenticationResponse, Command, Method, Replies, TcpRequestHeader,
 };
 
 pub struct Server(Async<TcpStream>);
@@ -23,19 +22,20 @@ impl Server {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| anyhow!("invalid listen address"))?;
-        block_on(async {
+        let executor = Executor::new();
+        block_on(executor.run(async {
             let listener = Async::<TcpListener>::bind(addr)?;
             loop {
                 let (stream, _) = listener.accept().await?;
-                spawn(async move {
+                let handler = executor.spawn(async move {
                     let server: Server = stream.into();
                     if let Err(e) = server.proxy().await {
                         println!("error: {}", e);
                     }
-                })
-                .detach();
+                });
+                handler.await
             }
-        })
+        }))
     }
 
     async fn proxy(mut self) -> Result<()> {
@@ -65,11 +65,7 @@ impl Server {
         let addr = header.address();
         match header.command() {
             Command::Connect => {
-                let dest_addr: Result<_, Error> = {
-                    let addr = addr.clone();
-                    unblock(|| addr.try_into()).await
-                };
-                let dest_addr = match dest_addr {
+                let dest_addr: SocketAddr = match addr.clone().try_into() {
                     Ok(addr) => addr,
                     Err(e) => {
                         let resp = e.reply.into_response(addr.clone());
