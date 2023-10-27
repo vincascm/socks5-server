@@ -8,10 +8,9 @@ edition = "2021"
 anyhow = "1.0.75"
 async-dns = "0.1.0"
 async-executor = "1.6.0"
-async-io = "2.0.0"
-futures-lite = "2.0.0"
-#socks5 = { git = "https://github.com/vincascm/socks5.git" }
-socks5 = { path = "../socks5" }
+async-io = "1.13.0"
+futures-lite = "1.13.0"
+socks5 = { git = "https://github.com/vincascm/socks5.git" }
 
 [profile.release]
 opt-level = "z"
