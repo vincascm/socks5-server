@@ -43,10 +43,11 @@ impl Server {
         let authentication_request = AuthenticationRequest::read_from(&mut self.0).await?;
         let authentication_response: AuthenticationResponse =
             if authentication_request.required_authentication() {
-                Method::NotAcceptable.into()
+                Method::NotAcceptable
             } else {
-                Method::NONE.into()
-            };
+                Method::NONE
+            }
+            .into();
         self.write(&authentication_response.to_bytes()).await?;
 
         // requests
