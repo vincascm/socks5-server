@@ -104,7 +104,8 @@ impl Server {
         Ok(self.0.flush().await?)
     }
 
-    async fn lookup(name: &str) -> std::io::Result<IpAddr> {
+    async fn lookup(name: &[u8]) -> std::io::Result<IpAddr> {
+        let name = String::from_utf8_lossy(name);
         let addrs = async_dns::lookup(&name).await?;
         match addrs.into_iter().next() {
             Some(addr) => Ok(addr.ip_address),
