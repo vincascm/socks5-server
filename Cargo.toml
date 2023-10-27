@@ -6,10 +6,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
+async-dns = "0.1.0"
 async-executor = "1.6.0"
 async-io = "2.0.0"
 futures-lite = "2.0.0"
-socks5 = { git = "https://github.com/vincascm/socks5.git" }
+#socks5 = { git = "https://github.com/vincascm/socks5.git" }
+socks5 = { path = "../socks5" }
 
 [profile.release]
 opt-level = "z"

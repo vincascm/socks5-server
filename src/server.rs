@@ -1,6 +1,6 @@
 use std::{
-    convert::TryInto,
-    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
+    io::ErrorKind,
+    net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
 };
 
 use anyhow::{anyhow, Result};
@@ -65,7 +65,7 @@ impl Server {
         let addr = header.address();
         match header.command() {
             Command::Connect => {
-                let dest_addr: SocketAddr = match addr.clone().try_into() {
+                let dest_addr = match addr.lookup(Self::lookup).await {
                     Ok(addr) => addr,
                     Err(e) => {
                         let resp = e.reply.into_response(addr.clone());
@@ -102,6 +102,14 @@ impl Server {
     async fn write(&mut self, bytes: &[u8]) -> Result<()> {
         self.0.write_all(bytes).await?;
         Ok(self.0.flush().await?)
+    }
+
+    async fn lookup(name: &str) -> std::io::Result<IpAddr> {
+        let addrs = async_dns::lookup(&name).await?;
+        match addrs.into_iter().next() {
+            Some(addr) => Ok(addr.ip_address),
+            None => Err(ErrorKind::AddrNotAvailable.into()),
+        }
     }
 }
 
