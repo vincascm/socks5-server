@@ -1,4 +1,10 @@
-mod server;
+use std::net::{TcpListener, ToSocketAddrs};
+
+use anyhow::{anyhow, Result};
+use async_executor::Executor;
+use async_io::{block_on, Async};
+
+use socks5::proxy;
 
 macro_rules! help {
     () => {
@@ -9,6 +15,27 @@ options:
     -V  show version
 "#
     };
+}
+
+fn run(addr: &str) -> Result<()> {
+    let addr = addr
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("invalid listen address"))?;
+    let executor = Executor::new();
+    block_on(executor.run(async {
+        let listener = Async::<TcpListener>::bind(addr)?;
+        loop {
+            let (mut stream, src) = listener.accept().await?;
+            executor
+                .spawn(async move {
+                    if let Err(e) = proxy(&mut stream, src).await {
+                        println!("error: {}", e);
+                    }
+                })
+                .detach();
+        }
+    }))
 }
 
 fn main() {
@@ -30,7 +57,7 @@ fn main() {
         Ok(listen) => listen,
         Err(e) => return println!("{}", e),
     };
-    if let Err(e) = server::Server::run(&listen) {
+    if let Err(e) = run(&listen) {
         println!("startup error: {}", e)
     }
 }
