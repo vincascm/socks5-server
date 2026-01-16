@@ -1,15 +1,15 @@
 [package]
 name = "socks5-server"
-version = "1.2.1"
+version = "1.2.2"
 authors = ["vinoca <vinoca@vinoca.org>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-anyhow = "1.0.97"
+anyhow = "1.0.100"
 async-dns = "0.1.1"
-async-executor = "1.13.1"
-async-io = "1.13.0"
-futures-lite = "1.13.0"
+async-executor = "1.13.3"
+async-io = "2.6.0"
+futures-lite = "2.6.1"
 socks5 = { package = "socks5-server", git = "https://github.com/vincascm/socks5.git" }
 
 [profile.release]
