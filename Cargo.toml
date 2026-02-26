@@ -6,7 +6,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-async-dns = { git = "https://github.com/vincascm/async-dns.git" }
 async-executor = "1.13.3"
 async-io = "2.6.0"
 futures-lite = "2.6.1"
