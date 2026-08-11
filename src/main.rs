@@ -1,8 +1,7 @@
-use std::net::{TcpListener, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 
 use anyhow::{anyhow, Result};
-use async_executor::Executor;
-use async_io::{block_on, Async};
+use tokio::net::TcpListener;
 
 use socks5::proxy;
 
@@ -22,20 +21,20 @@ fn run(addr: &str) -> Result<()> {
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| anyhow!("invalid listen address"))?;
-    let executor = Executor::new();
-    block_on(executor.run(async {
-        let listener = Async::<TcpListener>::bind(addr)?;
-        loop {
-            let (mut stream, src) = listener.accept().await?;
-            executor
-                .spawn(async move {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()?
+        .block_on(async {
+            let listener = TcpListener::bind(addr).await?;
+            loop {
+                let (mut stream, src) = listener.accept().await?;
+                tokio::spawn(async move {
                     if let Err(e) = proxy(&mut stream, src).await {
                         println!("error: {}", e);
                     }
-                })
-                .detach();
-        }
-    }))
+                });
+            }
+        })
 }
 
 fn main() {
